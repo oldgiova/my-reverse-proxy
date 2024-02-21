@@ -1,0 +1,484 @@
+#
+# configuration for proxying docker registry with access control
+# from PASSWORD_FILE_INTERNAL
+#
+
+# Access for ME customers only to Mender backend images
+server {
+  listen REGISTRY_PORT REGISTRY_SSL_LISTEN;
+  server_name REGISTRY_SERVER_NAME;
+
+  error_log /dev/stdout info;
+
+  # do not expose the version number
+  server_tokens off;
+
+  REGISTRY_SSL_INCLUDE
+
+  resolver RESOLVER;
+
+  # Access for ME customers only to mtls-ambassador
+  location ~ ^/v2/mendersoftware/mtls-ambassador.*$ {
+    satisfy any;
+    auth_basic "Mender realm";
+    auth_basic_user_file PASSWORD_FILE_INTERNAL;
+    set $mtlsambassadorgroup ME_REGISTRY_MTLS_AMBASSADOR_LDAP_GROUP;
+    auth_request /_ldap-auth-mtls-ambassador;
+
+    # restrict write access to users without admin privileges
+    set $access_lvl "user";
+    if ($remote_user ~ "^ntadm_?.*$") {
+      set $access_lvl "${access_lvl}_adm";
+    }
+    if ($request_method !~* "^(GET|HEAD)$") {
+      set $access_lvl "${access_lvl}_rw";
+    }
+    if ($access_lvl = "user_rw") {
+      return 403;
+    }
+
+    set $upstream           ECR_URL;
+
+    proxy_pass              $upstream;
+    proxy_redirect          $upstream https://$host;
+
+    proxy_set_header        X-Forwarded-User     "Basic TOKEN";
+    proxy_set_header        Authorization        "Basic TOKEN";
+
+    proxy_pass_header       Server;
+    proxy_hide_header       Link;
+
+    client_max_body_size    0;
+    proxy_connect_timeout   300s;
+    proxy_read_timeout      300s;
+    proxy_send_timeout      300s;
+    send_timeout            300s;
+  }
+
+  location ~ ^/v2/mendersoftware/(deployments-enterprise|deviceauth-enterprise|devicemonitor|auditlogs|email-sender|inventory-enterprise|tenantadm|useradm-enterprise|workflows-enterprise|workflows-enterprise-worker|generate-delta-worker|mender-gateway).*$ {
+    satisfy any;
+    auth_basic "Mender realm";
+    auth_basic_user_file PASSWORD_FILE_INTERNAL;
+    set $group ME_REGISTRY_LDAP_GROUP;
+    auth_request /_ldap-auth;
+
+    # restrict write access to users without admin privileges
+    set $access_lvl "user";
+    if ($remote_user ~ "^ntadm_?.*$") {
+      set $access_lvl "${access_lvl}_adm";
+    }
+    if ($request_method !~* "^(GET|HEAD)$") {
+      set $access_lvl "${access_lvl}_rw";
+    }
+    if ($access_lvl = "user_rw") {
+      return 403;
+    }
+
+    set $upstream           ECR_URL;
+
+    proxy_pass              $upstream;
+    proxy_redirect          $upstream https://$host;
+
+    proxy_set_header        X-Forwarded-User     "Basic TOKEN";
+    proxy_set_header        Authorization        "Basic TOKEN";
+
+    proxy_pass_header       Server;
+    proxy_hide_header       Link;
+
+    client_max_body_size    0;
+    proxy_connect_timeout   300s;
+    proxy_read_timeout      300s;
+    proxy_send_timeout      300s;
+    send_timeout            300s;
+  }
+
+  # for authentication purpose only
+  location = /v2/ {
+    if ($request_method !~ "^(GET)$") {
+      return 403;
+    }
+
+    satisfy any;
+    auth_basic "Mender realm";
+    auth_basic_user_file PASSWORD_FILE_INTERNAL;
+    set $group ME_REGISTRY_LDAP_GROUP;
+    auth_request /_ldap-auth-base;
+
+    set $upstream           ECR_URL;
+
+    proxy_pass              $upstream;
+    proxy_redirect          $upstream https://$host;
+
+    proxy_set_header        X-Forwarded-User     "Basic TOKEN";
+    proxy_set_header        Authorization        "Basic TOKEN";
+
+    proxy_pass_header       Server;
+    proxy_hide_header       Link;
+
+    client_max_body_size    0;
+    proxy_connect_timeout   300s;
+    proxy_read_timeout      300s;
+    proxy_send_timeout      300s;
+    send_timeout            300s;
+  }
+
+  # Access to all resources in registry
+  location ~ ^/v2/(.*)$ {
+    auth_basic "Mender realm";
+    auth_basic_user_file PASSWORD_FILE_INTERNAL;
+
+    # restrict write access to users without admin privileges
+    set $access_lvl "user";
+    if ($remote_user ~ "^ntadm_?.*$") {
+      set $access_lvl "${access_lvl}_adm";
+    }
+    if ($request_method !~* "^(GET|HEAD)$") {
+      set $access_lvl "${access_lvl}_rw";
+    }
+    if ($access_lvl = "user_rw") {
+      return 403;
+    }
+
+    set $upstream           ECR_URL;
+
+    proxy_pass              $upstream;
+    proxy_redirect          $upstream https://$host;
+
+    proxy_set_header        X-Forwarded-User     "Basic TOKEN";
+    proxy_set_header        Authorization        "Basic TOKEN";
+
+    proxy_pass_header       Server;
+    proxy_hide_header       Link;
+
+    client_max_body_size    0;
+    proxy_connect_timeout   300s;
+    proxy_read_timeout      300s;
+    proxy_send_timeout      300s;
+    send_timeout            300s;
+  }
+
+  location /_ldap-auth-base {
+    internal;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass http://nginx-ldap-auth:8888;
+    proxy_set_header X-Ldap-URL "ldap://LDAP_URL:LDAP_PORT";
+    proxy_set_header X-Ldap-Template "(&(uid=%(username)s))";
+    proxy_set_header X-Ldap-BaseDN "ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindDN "uid=LDAP_USER,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindPass "LDAP_PASSWORD";
+    proxy_set_header X-Ldap-Starttls "true";
+  }
+
+  location /_ldap-auth {
+    internal;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass http://nginx-ldap-auth:8888;
+    proxy_set_header X-Ldap-URL "ldap://LDAP_URL:LDAP_PORT";
+    proxy_set_header X-Ldap-Template "(&(uid=%(username)s)(memberOf=cn=$group,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com))";
+    proxy_set_header X-Ldap-BaseDN "ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindDN "uid=LDAP_USER,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindPass "LDAP_PASSWORD";
+    proxy_set_header X-Ldap-Starttls "true";
+  }
+
+  location /_ldap-auth-mtls-ambassador {
+    internal;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass http://nginx-ldap-auth:8888;
+    proxy_set_header X-Ldap-URL "ldap://LDAP_URL:LDAP_PORT";
+    proxy_set_header X-Ldap-Template "(&(uid=%(username)s)(memberOf=cn=$mtlsambassadorgroup,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com))";
+    proxy_set_header X-Ldap-BaseDN "ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindDN "uid=LDAP_USER,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindPass "LDAP_PASSWORD";
+    proxy_set_header X-Ldap-Starttls "true";
+  }
+
+
+  location / {
+    return 404;
+  }
+
+  location /health {
+    return 200;
+  }
+}
+
+
+#
+# configuration for accessing S3 buckets
+#
+server {
+  listen DOWNLOAD_PORT DOWNLOAD_SSL_LISTEN;
+  server_name DOWNLOAD_SERVER_NAME;
+
+  DOWNLOAD_SSL_INCLUDE
+
+  resolver RESOLVER;
+  resolver_timeout 10s;
+
+  # Access to: <S3_BUCKET>/mender-binary-delta/
+  # Auth: valid HM JWT token or HTTP basic auth
+  # Condition: HM tenants with plan `professional` or above
+  location ~ ^/content/hosted/mender-binary-delta/(.*) {
+    set $plan             'professional';
+    auth_request          /_hm-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full          mender-binary-delta/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    #access_by_lua_block {
+    #  local h = ngx.req.get_headers()
+    #  ngx.say("Bearer: ", ngx.req.get_headers()["JWT"])
+    #}
+    #rewrite_by_lua_block {
+    #  local cookie_value = ngx.req.get_headers()["Cookie"];
+    #  if cookie_value ~= nil then
+    #    local jwt = cookie_value:match("JWT=([^ ]+)");
+    #    ngx.req.set_header("Authorization", "Bearer " .. jwt);
+    #  end
+    #    ngx.req.clear_header("Cookie");
+    #}
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # Access to: <S3_BUCKET>/mender-binary-delta/
+  # Auth: LDAP, 'MENDER_BINARY_DELTA_LDAP_GROUP' group
+  location ~ ^/content/on-prem/mender-binary-delta/(.*) {
+    satisfy any;
+    auth_basic            "Mender realm";
+    auth_basic_user_file  PASSWORD_FILE_INTERNAL;
+    set $group            'MENDER_BINARY_DELTA_LDAP_GROUP';
+    auth_request          /_ldap-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full          mender-binary-delta/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # Access to: <S3_BUCKET>/mender-monitor
+  # Auth: valid HM JWT token or HTTP basic auth
+  # Condition: HM tenants with the `monitor` add-on
+  location ~ ^/content/hosted/mender-monitor/(.*) {
+    set $addon            'monitor';
+    auth_request          /_hm-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full         mender-monitor/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # Access to: <S3_BUCKET>/mender-monitor/
+  # Auth: LDAP, 'MENDER_MONITOR_LDAP_GROUP' group
+  location ~ ^/content/on-prem/mender-monitor/(.*) {
+    satisfy any;
+    auth_basic            "Mender realm";
+    auth_basic_user_file  PASSWORD_FILE_INTERNAL;
+    set $group            'MENDER_MONITOR_LDAP_GROUP';
+    auth_request          /_ldap-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full         mender-monitor/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # Access to: <S3_BUCKET>/mender-gateway/
+  # Auth: valid HM JWT token or HTTP basic auth
+  # Condition: HM tenants with plan `enterprise` or above
+  location ~ ^/content/hosted/mender-gateway/(.*) {
+    set $plan             'enterprise';
+    auth_request          /_hm-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full          mender-gateway/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # Access to: <S3_BUCKET>/mender-gateway/
+  # Auth: LDAP, 'MENDER_GATEWAY_LDAP_GROUP' group
+  location ~ ^/content/on-prem/mender-gateway/(.*) {
+    satisfy any;
+    auth_basic            "Mender realm";
+    auth_basic_user_file  PASSWORD_FILE_INTERNAL;
+    set $group            'MENDER_GATEWAY_LDAP_GROUP';
+    auth_request          /_ldap-auth;
+    set $bucket           'S3_BUCKET';
+    set $aws_access       'AWS_ACCESS_KEY_ID';
+    set $aws_secret       'AWS_SECRET_ACCESS_KEY';
+    set $url_full          mender-gateway/$1;
+    set_by_lua $now       "return ngx.cookie_time(ngx.time())";
+    set $string_to_sign   "$request_method\n\n\n\nx-amz-date:${now}\n/$bucket/$url_full";
+    set_hmac_sha1          $aws_signature $aws_secret $string_to_sign;
+    set_encode_base64      $aws_signature $aws_signature;
+    proxy_http_version     1.1;
+    proxy_set_header       Host $bucket.s3.amazonaws.com;
+    proxy_set_header       x-amz-date $now;
+    proxy_set_header       Authorization "AWS $aws_access:$aws_signature";
+    proxy_buffering        off;
+    proxy_intercept_errors on;
+    proxy_pass             http://s3.amazonaws.com/$url_full;
+  }
+
+  # grants access using Hosted Mender, either via basic authentication
+  # or JWT token verification, optionally setting a minimum required plan
+  # and/or a required addon
+  location /_hm-auth {
+    access_log /dev/stdout combined;
+    internal;
+    proxy_method POST;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Mender-Required-Minimal-Plan $plan;
+    proxy_set_header X-Mender-Required-Addon $addon;
+    #rewrite_by_lua_block {
+    #  local cookie_value = ngx.req.get_headers()["Cookie"];
+    #  if cookie_value ~= nil then
+    #    local jwt = cookie_value:match("JWT=([^ ]+)");
+    #    ngx.req.set_header("Authorization", "Bearer " .. jwt);
+    #  end
+    #    ngx.req.clear_header("Cookie");
+    #}
+
+      #local data = ngx.req.get_headers()["JWT"]
+      #if data then
+      #  jwt = cjson.decode(data)
+
+    #set $jwt_token "..";
+    #rewrite_by_lua_block {
+    #  ngx.req.set_header("Authorization", "Bearer " .. "");
+    #}
+
+    #rewrite_by_lua_block {
+    #  ngx.req.set_header("Authorization", "Bearer " .. "....")
+    #}
+
+    # maybe works but I got API error
+    #set_by_lua_block $jwt_token {
+    #  ngx.req.read_body()
+    #  local body_data = ngx.req.get_body_data()
+    #  local json_data = cjson.decode(body_data)
+    #  return json_data.token
+    #}
+      #return "...."
+
+    #set_by_lua_block $jwt_token {
+    #  local cjson = require "cjson"
+    #  local body_data = ngx.var.request_body
+    #  if body_data then
+    #    local json_data = cjson.decode(body_data)
+    #    local jwt_claim = json_data.JWT
+    #    return jwt_claim.token
+    #  end
+    #  return ""
+    #}
+
+    #access_by_lua_block {
+    #  local h = ngx.req.get_headers()
+    #  ngx.say("Bearer: ", ngx.req.get_headers()["JWT"])
+    #}
+    set_by_lua_block $jwt_token {
+      local cookie_value = ngx.req.get_headers()["Cookie"];
+      if cookie_value ~= nil then
+        local jwt_token = cookie_value:match("JWT=([^ ]+)");
+        ngx.req.clear_header("Cookie");
+        return jwt_token
+      end
+      return ""
+    }
+
+    proxy_set_header Authorization "Bearer $jwt_token";
+    #proxy_pass_header Authorization;
+    proxy_pass http://hm-auth:8888;
+    #proxy_pass_request_body off;
+    proxy_pass_request_body on;
+    #jproxy_set_header X-Forwarded-User "Bearer token";
+    #set_by_lua_block $jwt_token {
+    #  ngx.req.read_body()
+    #  local body_data = ngx.req.get_body_data()
+    #  if body_data then
+    #    local json_data = cjson.decode(body_data)
+    #    return json_data.token or ""
+    #  end
+    #}
+
+    #set_by_lua $jwt_token "return cjson.decode(ngx.req.get_body_data()).token"
+
+    #proxy_set_header Authorization "Bearer $jwt_token";
+  }
+
+  # grants access if a user exists in LDAP, provided valid credentials and is a member of specified group
+  # the group should be proveded as parameters string
+  location /_ldap-auth {
+    internal;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass http://nginx-ldap-auth:8888;
+    proxy_set_header X-Ldap-URL "ldap://LDAP_URL:LDAP_PORT";
+    proxy_set_header X-Ldap-Template "(&(uid=%(username)s)(memberOf=cn=$group,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com))";
+    proxy_set_header X-Ldap-BaseDN "ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindDN "uid=LDAP_USER,ou=Users,o=JUMPCLOUD_ORG,dc=jumpcloud,dc=com";
+    proxy_set_header X-Ldap-BindPass "LDAP_PASSWORD";
+    proxy_set_header X-Ldap-Starttls "true";
+  }
+
+  # respond 404 for / page
+  location / {
+    return 404;
+  }
+
+}

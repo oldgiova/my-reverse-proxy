@@ -18,7 +18,7 @@ build: ## Run docker build
 
 .PHONY: run
 run: ## Run nginx
-	docker run --name nginx --rm nginx:local
+	docker run --name nginx -p8080:8080 -p80:80 -p443:443 --rm nginx:local
 
 .PHONY: run-debug
 run-debug: ## Run nginx with debug mode
